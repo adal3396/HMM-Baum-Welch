@@ -1,11 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hidden Markov Model - Baum-Welch Visualizer</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
     <div class="glass-bg"></div>
 
@@ -32,7 +35,7 @@
 
         <section class="card matrices-section" id="matricesSection" style="display: none;">
             <h2>Initial Parameters (&#955; = &#960;, A, B)</h2>
-            
+
             <div class="matrix-container">
                 <div class="matrix-card">
                     <h3>Initial Probabilities (&#960;)</h3>
@@ -52,7 +55,8 @@
 
             <div class="observation-setup">
                 <label>Observation Sequence (Comma Separated)</label>
-                <input type="text" id="sequenceInput" value="Walk, Shop, Shop, Walk, Shop" placeholder="Input a sequence of observations...">
+                <input type="text" id="sequenceInput" value="Walk, Shop, Shop, Walk, Shop"
+                    placeholder="Input a sequence of observations...">
             </div>
 
             <div class="actions">
@@ -64,6 +68,9 @@
 
         <section id="resultsSection" class="results-section" style="display: none;">
             <h2>Iteration Results</h2>
+            <div class="chart-container">
+                <canvas id="gammaChart"></canvas>
+            </div>
             <div id="iterationLog">
                 <!-- Iteration outputs will be injected here -->
             </div>
@@ -73,4 +80,5 @@
 
     <script src="script.js"></script>
 </body>
+
 </html>

@@ -20,6 +20,7 @@ let pi = [];
 let A = [];
 let B = [];
 let iterationCount = 0;
+let gammaChartInstance = null;
 
 // Default values as per typical HMM example
 const defaultPi = [0.6, 0.4];
@@ -89,7 +90,7 @@ function renderMatrices() {
 function readMatrices() {
     const N = states.length;
     const M = observations.length;
-    
+
     let currentPi = [];
     for (let i = 0; i < N; i++) {
         currentPi.push(parseFloat(document.getElementById(`pi_${i}`).value));
@@ -112,14 +113,14 @@ function readMatrices() {
         }
         currentB.push(row);
     }
-    
+
     return { currentPi, currentA, currentB };
 }
 
 function updateDOMMatrices(newPi, newA, newB) {
     const N = states.length;
     const M = observations.length;
-    
+
     for (let i = 0; i < N; i++) {
         document.getElementById(`pi_${i}`).value = newPi[i].toFixed(4);
     }
@@ -140,7 +141,7 @@ function updateDOMMatrices(newPi, newA, newB) {
 function runIteration() {
     const seqStr = sequenceInput.value.split(',').map(s => s.trim()).filter(s => s);
     const O = seqStr.map(s => observations.indexOf(s));
-    
+
     if (O.includes(-1)) {
         alert("Observation sequence contains an invalid observation symbol!");
         return;
@@ -149,18 +150,18 @@ function runIteration() {
     const { currentPi, currentA, currentB } = readMatrices();
     const T = O.length;
     const N = states.length;
-    
+
     // 1. Forward Pass (Alpha)
     let alpha = Array(T).fill(0).map(() => Array(N).fill(0));
     for (let i = 0; i < N; i++) {
         alpha[0][i] = currentPi[i] * currentB[i][O[0]];
     }
-    
+
     for (let t = 1; t < T; t++) {
         for (let j = 0; j < N; j++) {
             let sum = 0;
             for (let i = 0; i < N; i++) {
-                sum += alpha[t-1][i] * currentA[i][j];
+                sum += alpha[t - 1][i] * currentA[i][j];
             }
             alpha[t][j] = sum * currentB[j][O[t]];
         }
@@ -169,14 +170,14 @@ function runIteration() {
     // 2. Backward Pass (Beta)
     let beta = Array(T).fill(0).map(() => Array(N).fill(0));
     for (let i = 0; i < N; i++) {
-        beta[T-1][i] = 1;
+        beta[T - 1][i] = 1;
     }
-    
+
     for (let t = T - 2; t >= 0; t--) {
         for (let i = 0; i < N; i++) {
             let sum = 0;
             for (let j = 0; j < N; j++) {
-                sum += currentA[i][j] * currentB[j][O[t+1]] * beta[t+1][j];
+                sum += currentA[i][j] * currentB[j][O[t + 1]] * beta[t + 1][j];
             }
             beta[t][i] = sum;
         }
@@ -184,24 +185,24 @@ function runIteration() {
 
     // P(O)
     let P_O = 0;
-    for (let i = 0; i < N; i++) P_O += alpha[T-1][i];
+    for (let i = 0; i < N; i++) P_O += alpha[T - 1][i];
 
     // 3. State Responsibilities (Gamma) and Transitions (Xi)
     let gamma = Array(T).fill(0).map(() => Array(N).fill(0));
-    let xi = Array(T-1).fill(0).map(() => Array(N).fill(0).map(() => Array(N).fill(0)));
-    
+    let xi = Array(T - 1).fill(0).map(() => Array(N).fill(0).map(() => Array(N).fill(0)));
+
     for (let t = 0; t < T; t++) {
         let sumGamma = 0;
         for (let i = 0; i < N; i++) {
             gamma[t][i] = (alpha[t][i] * beta[t][i]) / P_O;
             sumGamma += gamma[t][i];
         }
-        
+
         if (t < T - 1) {
             let sumXi = 0;
             for (let i = 0; i < N; i++) {
                 for (let j = 0; j < N; j++) {
-                    xi[t][i][j] = (alpha[t][i] * currentA[i][j] * currentB[j][O[t+1]] * beta[t+1][j]) / P_O;
+                    xi[t][i][j] = (alpha[t][i] * currentA[i][j] * currentB[j][O[t + 1]] * beta[t + 1][j]) / P_O;
                     sumXi += xi[t][i][j];
                 }
             }
@@ -210,24 +211,24 @@ function runIteration() {
 
     // 4. Updates (Baum-Welch)
     let newPi = [...gamma[0]];
-    
+
     let newA = Array(N).fill(0).map(() => Array(N).fill(0));
     for (let i = 0; i < N; i++) {
         let denomA = 0;
         for (let t = 0; t < T - 1; t++) denomA += gamma[t][i];
-        
+
         for (let j = 0; j < N; j++) {
             let numA = 0;
             for (let t = 0; t < T - 1; t++) numA += xi[t][i][j];
             newA[i][j] = (denomA === 0) ? 0 : numA / denomA;
         }
     }
-    
+
     let newB = Array(N).fill(0).map(() => Array(observations.length).fill(0));
     for (let i = 0; i < N; i++) {
         let denomB = 0;
         for (let t = 0; t < T; t++) denomB += gamma[t][i];
-        
+
         for (let k = 0; k < observations.length; k++) {
             let numB = 0;
             for (let t = 0; t < T; t++) {
@@ -240,11 +241,12 @@ function runIteration() {
     iterationCount++;
     displayResults(alpha, beta, gamma, newPi, newA, newB);
     updateDOMMatrices(newPi, newA, newB);
+    updateChart(gamma);
 }
 
 function displayResults(alpha, beta, gamma, pi_new, a_new, b_new) {
     resultsSection.style.display = 'flex';
-    
+
     let html = `
         <div class="iteration-card">
             <h3>Iteration ${iterationCount}</h3>
@@ -253,7 +255,7 @@ function displayResults(alpha, beta, gamma, pi_new, a_new, b_new) {
                 <h4>Forward Probabilities (&#945;)</h4>
                 <table>
                     <tr><th>Time Step</th>${states.map(s => `<th>${s}</th>`).join('')}</tr>
-                    ${alpha.map((row, t) => `<tr><td>t=${t+1} (${sequenceInput.value.split(',')[t].trim()})</td>${row.map(val => `<td>${val.toExponential(4)}</td>`).join('')}</tr>`).join('')}
+                    ${alpha.map((row, t) => `<tr><td>t=${t + 1} (${sequenceInput.value.split(',')[t].trim()})</td>${row.map(val => `<td>${val.toExponential(4)}</td>`).join('')}</tr>`).join('')}
                 </table>
             </div>
 
@@ -261,7 +263,7 @@ function displayResults(alpha, beta, gamma, pi_new, a_new, b_new) {
                 <h4>Backward Probabilities (&#946;)</h4>
                 <table>
                     <tr><th>Time Step</th>${states.map(s => `<th>${s}</th>`).join('')}</tr>
-                    ${beta.map((row, t) => `<tr><td>t=${t+1}</td>${row.map(val => `<td>${val.toExponential(4)}</td>`).join('')}</tr>`).join('')}
+                    ${beta.map((row, t) => `<tr><td>t=${t + 1}</td>${row.map(val => `<td>${val.toExponential(4)}</td>`).join('')}</tr>`).join('')}
                 </table>
             </div>
 
@@ -269,12 +271,12 @@ function displayResults(alpha, beta, gamma, pi_new, a_new, b_new) {
                 <h4>State Responsibilities (&#947;)</h4>
                 <table>
                     <tr><th>Time Step</th>${states.map(s => `<th>${s}</th>`).join('')}</tr>
-                    ${gamma.map((row, t) => `<tr><td>t=${t+1}</td>${row.map(val => `<td>${val.toFixed(4)}</td>`).join('')}</tr>`).join('')}
+                    ${gamma.map((row, t) => `<tr><td>t=${t + 1}</td>${row.map(val => `<td>${val.toFixed(4)}</td>`).join('')}</tr>`).join('')}
                 </table>
             </div>
         </div>
     `;
-    
+
     // prepend the result
     iterationLog.innerHTML = html + iterationLog.innerHTML;
 }
@@ -286,9 +288,86 @@ runMultiBtn.addEventListener('click', () => {
     }
 });
 
+function updateChart(gamma) {
+    const ctx = document.getElementById('gammaChart').getContext('2d');
+    const T = sequenceInput.value.split(',').map(s => s.trim()).filter(s => s).length;
+
+    // Prepare datasets for each state
+    const datasets = states.map((state, i) => {
+        // Generate a pseudo-random harmonious color based on index
+        const hue = (i * 137.5) % 360;
+        return {
+            label: `State: ${state}`,
+            data: gamma.map(row => row[i]),
+            borderColor: `hsl(${hue}, 70%, 60%)`,
+            backgroundColor: `hsla(${hue}, 70%, 60%, 0.2)`,
+            borderWidth: 2,
+            pointRadius: 4,
+            fill: true,
+            tension: 0.3
+        };
+    });
+
+    const labels = Array.from({ length: T }, (_, i) => `t=${i + 1}`);
+
+    if (gammaChartInstance) {
+        gammaChartInstance.data.labels = labels;
+        gammaChartInstance.data.datasets = datasets;
+        gammaChartInstance.update();
+    } else {
+        gammaChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'State Responsibilities (γ) over Time',
+                        color: '#F8FAFC'
+                    },
+                    legend: {
+                        labels: {
+                            color: '#94A3B8'
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: 'rgba(255,255,255,0.1)'
+                        },
+                        ticks: {
+                            color: '#94A3B8'
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        max: 1,
+                        grid: {
+                            color: 'rgba(255,255,255,0.1)'
+                        },
+                        ticks: {
+                            color: '#94A3B8'
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
 resetBtn.addEventListener('click', () => {
     iterationCount = 0;
     iterationLog.innerHTML = '';
     resultsSection.style.display = 'none';
     renderMatrices();
+    if (gammaChartInstance) {
+        gammaChartInstance.destroy();
+        gammaChartInstance = null;
+    }
 });
