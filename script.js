@@ -9,9 +9,15 @@ const bMatrix = document.getElementById('bMatrix');
 const sequenceInput = document.getElementById('sequenceInput');
 const runIterBtn = document.getElementById('runIterBtn');
 const runMultiBtn = document.getElementById('runMultiBtn');
+const runConvBtn = document.getElementById('runConvBtn');
 const resetBtn = document.getElementById('resetBtn');
 const resultsSection = document.getElementById('resultsSection');
 const iterationLog = document.getElementById('iterationLog');
+const metricsPanel = document.getElementById('metricsPanel');
+const valIteration = document.getElementById('valIteration');
+const valLogLikelihood = document.getElementById('valLogLikelihood');
+const valDelta = document.getElementById('valDelta');
+const valStatus = document.getElementById('valStatus');
 
 // State Variables
 let states = [];
@@ -21,6 +27,11 @@ let A = [];
 let B = [];
 let iterationCount = 0;
 let gammaChartInstance = null;
+let llChartInstance = null;
+let networkInstance = null;
+let llHistory = [];
+let lastLogLikelihood = null;
+let statusText = "Initialized";
 
 // Default values as per typical HMM example
 const defaultPi = [0.6, 0.4];
@@ -151,10 +162,21 @@ function runIteration() {
     const T = O.length;
     const N = states.length;
 
-    // 1. Forward Pass (Alpha)
+    // Scaling factors array
+    let c = Array(T).fill(0);
+
+    // 1. Forward Pass (Alpha) with scaling
     let alpha = Array(T).fill(0).map(() => Array(N).fill(0));
+
     for (let i = 0; i < N; i++) {
         alpha[0][i] = currentPi[i] * currentB[i][O[0]];
+        c[0] += alpha[0][i];
+    }
+
+    // Scale alpha[0]
+    c[0] = (c[0] === 0) ? 1e-300 : 1 / c[0];
+    for (let i = 0; i < N; i++) {
+        alpha[0][i] *= c[0];
     }
 
     for (let t = 1; t < T; t++) {
@@ -164,13 +186,20 @@ function runIteration() {
                 sum += alpha[t - 1][i] * currentA[i][j];
             }
             alpha[t][j] = sum * currentB[j][O[t]];
+            c[t] += alpha[t][j];
+        }
+
+        // Scale alpha[t]
+        c[t] = (c[t] === 0) ? 1e-300 : 1 / c[t];
+        for (let j = 0; j < N; j++) {
+            alpha[t][j] *= c[t];
         }
     }
 
-    // 2. Backward Pass (Beta)
+    // 2. Backward Pass (Beta) with scaling
     let beta = Array(T).fill(0).map(() => Array(N).fill(0));
     for (let i = 0; i < N; i++) {
-        beta[T - 1][i] = 1;
+        beta[T - 1][i] = 1 * c[T - 1];
     }
 
     for (let t = T - 2; t >= 0; t--) {
@@ -179,31 +208,55 @@ function runIteration() {
             for (let j = 0; j < N; j++) {
                 sum += currentA[i][j] * currentB[j][O[t + 1]] * beta[t + 1][j];
             }
-            beta[t][i] = sum;
+            beta[t][i] = sum * c[t];
         }
     }
 
-    // P(O)
-    let P_O = 0;
-    for (let i = 0; i < N; i++) P_O += alpha[T - 1][i];
+    // Log-Likelihood P(O|lambda)
+    let logLikelihood = 0;
+    for (let t = 0; t < T; t++) {
+        logLikelihood -= Math.log(c[t]);
+    }
+
+    let delta = 0;
+    if (lastLogLikelihood !== null) {
+        delta = logLikelihood - lastLogLikelihood;
+        if (Math.abs(delta) < 1e-4) {
+            statusText = "Converged";
+        } else {
+            statusText = "Iterating";
+        }
+    } else {
+        statusText = "Started";
+    }
+
+    lastLogLikelihood = logLikelihood;
+    llHistory.push(logLikelihood);
 
     // 3. State Responsibilities (Gamma) and Transitions (Xi)
+    // Because of scaling, Gamma and Xi formulas are simplified:
     let gamma = Array(T).fill(0).map(() => Array(N).fill(0));
     let xi = Array(T - 1).fill(0).map(() => Array(N).fill(0).map(() => Array(N).fill(0)));
 
     for (let t = 0; t < T; t++) {
-        let sumGamma = 0;
         for (let i = 0; i < N; i++) {
-            gamma[t][i] = (alpha[t][i] * beta[t][i]) / P_O;
-            sumGamma += gamma[t][i];
+            let denom = 0;
+            for (let j = 0; j < N; j++) denom += alpha[t][j] * beta[t][j] / c[t];
+            denom = denom === 0 ? 1 : denom;
+            gamma[t][i] = (alpha[t][i] * beta[t][i] / c[t]) / denom;
         }
 
         if (t < T - 1) {
-            let sumXi = 0;
+            let denomXi = 0;
             for (let i = 0; i < N; i++) {
                 for (let j = 0; j < N; j++) {
-                    xi[t][i][j] = (alpha[t][i] * currentA[i][j] * currentB[j][O[t + 1]] * beta[t + 1][j]) / P_O;
-                    sumXi += xi[t][i][j];
+                    denomXi += alpha[t][i] * currentA[i][j] * currentB[j][O[t + 1]] * beta[t + 1][j];
+                }
+            }
+            denomXi = denomXi === 0 ? 1 : denomXi;
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    xi[t][i][j] = (alpha[t][i] * currentA[i][j] * currentB[j][O[t + 1]] * beta[t + 1][j]) / denomXi;
                 }
             }
         }
@@ -242,6 +295,10 @@ function runIteration() {
     displayResults(alpha, beta, gamma, newPi, newA, newB);
     updateDOMMatrices(newPi, newA, newB);
     updateChart(gamma);
+    updateLLChart();
+    updateNetwork(newA);
+    updateMetrics(logLikelihood, delta);
+    return Math.abs(delta);
 }
 
 function displayResults(alpha, beta, gamma, pi_new, a_new, b_new) {
@@ -281,12 +338,33 @@ function displayResults(alpha, beta, gamma, pi_new, a_new, b_new) {
     iterationLog.innerHTML = html + iterationLog.innerHTML;
 }
 
-runIterBtn.addEventListener('click', runIteration);
+runIterBtn.addEventListener('click', () => runIteration());
 runMultiBtn.addEventListener('click', () => {
     for (let i = 0; i < 5; i++) {
         runIteration();
     }
 });
+runConvBtn.addEventListener('click', () => {
+    let delta = 1;
+    let safeguard = 0;
+    while (delta > 1e-4 && safeguard < 100) {
+        delta = runIteration();
+        safeguard++;
+    }
+});
+
+function updateMetrics(ll, delta) {
+    metricsPanel.style.display = 'flex';
+    valIteration.innerText = iterationCount;
+    valLogLikelihood.innerText = ll.toFixed(4);
+    valDelta.innerText = delta === 0 && iterationCount === 1 ? "-" : (delta > 0 ? "+" : "") + delta.toFixed(6);
+    valStatus.innerText = statusText;
+    if (statusText === "Converged") {
+        valStatus.style.color = "#10B981";
+    } else {
+        valStatus.style.color = "#F8FAFC";
+    }
+}
 
 function updateChart(gamma) {
     const ctx = document.getElementById('gammaChart').getContext('2d');
@@ -325,11 +403,6 @@ function updateChart(gamma) {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    title: {
-                        display: true,
-                        text: 'State Responsibilities (γ) over Time',
-                        color: '#F8FAFC'
-                    },
                     legend: {
                         labels: {
                             color: '#94A3B8'
@@ -361,13 +434,130 @@ function updateChart(gamma) {
     }
 }
 
+function updateLLChart() {
+    const ctx = document.getElementById('logLikelihoodChart').getContext('2d');
+    const labels = Array.from({ length: llHistory.length }, (_, i) => `Iter ${i + 1}`);
+
+    if (llChartInstance) {
+        llChartInstance.data.labels = labels;
+        llChartInstance.data.datasets[0].data = llHistory;
+        llChartInstance.update();
+    } else {
+        llChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Log-Likelihood',
+                    data: llHistory,
+                    borderColor: '#8B5CF6',
+                    backgroundColor: 'rgba(139, 92, 246, 0.2)',
+                    borderWidth: 2,
+                    pointRadius: 4,
+                    fill: true,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#94A3B8'
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: 'rgba(255,255,255,0.1)'
+                        },
+                        ticks: {
+                            color: '#94A3B8'
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: 'rgba(255,255,255,0.1)'
+                        },
+                        ticks: {
+                            color: '#94A3B8'
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+function updateNetwork(newA) {
+    const container = document.getElementById('hmmNetwork');
+
+    // Create nodes
+    const nodes = states.map((state, i) => ({
+        id: i,
+        label: state,
+        color: { background: `hsl(${(i * 137.5) % 360}, 70%, 60%)`, border: '#ffffff' },
+        font: { color: '#ffffff' }
+    }));
+
+    // Create edges based on transition probabilities
+    let edges = [];
+    for (let i = 0; i < states.length; i++) {
+        for (let j = 0; j < states.length; j++) {
+            if (newA[i][j] > 0.01) { // Only draw if > 1%
+                edges.push({
+                    from: i,
+                    to: j,
+                    label: newA[i][j].toFixed(2),
+                    arrows: 'to',
+                    color: { color: 'rgba(255, 255, 255, 0.5)' },
+                    font: { align: 'horizontal', color: '#94A3B8', strokeWidth: 0 },
+                    width: newA[i][j] * 5,
+                    smooth: { type: 'curvedCW', roundness: 0.2 }
+                });
+            }
+        }
+    }
+
+    const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+    const options = {
+        nodes: { shape: 'circle', margin: 10, shadow: true },
+        edges: { font: { size: 12 }, shadow: true },
+        physics: {
+            hierarchicalRepulsion: {
+                nodeDistance: 150
+            }
+        }
+    };
+
+    if (networkInstance) {
+        networkInstance.setData(data);
+    } else {
+        networkInstance = new vis.Network(container, data, options);
+    }
+}
+
 resetBtn.addEventListener('click', () => {
     iterationCount = 0;
     iterationLog.innerHTML = '';
+    llHistory = [];
+    lastLogLikelihood = null;
+    statusText = "Initialized";
     resultsSection.style.display = 'none';
+    metricsPanel.style.display = 'none';
     renderMatrices();
     if (gammaChartInstance) {
         gammaChartInstance.destroy();
         gammaChartInstance = null;
+    }
+    if (llChartInstance) {
+        llChartInstance.destroy();
+        llChartInstance = null;
+    }
+    if (networkInstance) {
+        networkInstance.destroy();
+        networkInstance = null;
     }
 });
