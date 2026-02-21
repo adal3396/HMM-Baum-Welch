@@ -1,0 +1,294 @@
+// DOM Elements
+const statesInput = document.getElementById('statesInput');
+const obsInput = document.getElementById('obsInput');
+const updateModelBtn = document.getElementById('updateModelBtn');
+const matricesSection = document.getElementById('matricesSection');
+const piMatrix = document.getElementById('piMatrix');
+const aMatrix = document.getElementById('aMatrix');
+const bMatrix = document.getElementById('bMatrix');
+const sequenceInput = document.getElementById('sequenceInput');
+const runIterBtn = document.getElementById('runIterBtn');
+const runMultiBtn = document.getElementById('runMultiBtn');
+const resetBtn = document.getElementById('resetBtn');
+const resultsSection = document.getElementById('resultsSection');
+const iterationLog = document.getElementById('iterationLog');
+
+// State Variables
+let states = [];
+let observations = [];
+let pi = [];
+let A = [];
+let B = [];
+let iterationCount = 0;
+
+// Default values as per typical HMM example
+const defaultPi = [0.6, 0.4];
+const defaultA = [[0.7, 0.3], [0.4, 0.6]];
+const defaultB = [[0.1, 0.9], [0.6, 0.4]];
+
+updateModelBtn.addEventListener('click', () => {
+    states = statesInput.value.split(',').map(s => s.trim()).filter(s => s);
+    observations = obsInput.value.split(',').map(s => s.trim()).filter(s => s);
+
+    if (states.length === 0 || observations.length === 0) {
+        alert("Please provide valid lists of states and observations.");
+        return;
+    }
+
+    renderMatrices();
+    matricesSection.style.display = 'block';
+});
+
+function renderMatrices() {
+    piMatrix.style.gridTemplateColumns = `repeat(${states.length}, 1fr)`;
+    aMatrix.style.gridTemplateColumns = `repeat(${states.length}, 1fr)`;
+    bMatrix.style.gridTemplateColumns = `repeat(${observations.length}, 1fr)`;
+
+    piMatrix.innerHTML = '';
+    aMatrix.innerHTML = '';
+    bMatrix.innerHTML = '';
+
+    // Initialize/Render Pi
+    pi = [];
+    states.forEach((state, i) => {
+        const val = (states.length === 2) ? defaultPi[i] : (1 / states.length).toFixed(4);
+        piMatrix.innerHTML += `
+            <div class="matrix-cell">
+                <span>&#960;(${state})</span>
+                <input type="number" step="0.01" min="0" max="1" id="pi_${i}" value="${val}">
+            </div>`;
+    });
+
+    // Initialize/Render A
+    A = [];
+    states.forEach((stateFrom, i) => {
+        states.forEach((stateTo, j) => {
+            const val = (states.length === 2) ? defaultA[i][j] : (1 / states.length).toFixed(4);
+            aMatrix.innerHTML += `
+                <div class="matrix-cell">
+                    <span>A(${stateFrom}&rarr;${stateTo})</span>
+                    <input type="number" step="0.01" min="0" max="1" id="a_${i}_${j}" value="${val}">
+                </div>`;
+        });
+    });
+
+    // Initialize/Render B
+    B = [];
+    states.forEach((state, i) => {
+        observations.forEach((obs, j) => {
+            const val = (states.length === 2 && observations.length === 2) ? defaultB[i][j] : (1 / observations.length).toFixed(4);
+            bMatrix.innerHTML += `
+                <div class="matrix-cell">
+                    <span>B(${state}&rarr;${obs})</span>
+                    <input type="number" step="0.01" min="0" max="1" id="b_${i}_${j}" value="${val}">
+                </div>`;
+        });
+    });
+}
+
+function readMatrices() {
+    const N = states.length;
+    const M = observations.length;
+    
+    let currentPi = [];
+    for (let i = 0; i < N; i++) {
+        currentPi.push(parseFloat(document.getElementById(`pi_${i}`).value));
+    }
+
+    let currentA = [];
+    for (let i = 0; i < N; i++) {
+        let row = [];
+        for (let j = 0; j < N; j++) {
+            row.push(parseFloat(document.getElementById(`a_${i}_${j}`).value));
+        }
+        currentA.push(row);
+    }
+
+    let currentB = [];
+    for (let i = 0; i < N; i++) {
+        let row = [];
+        for (let j = 0; j < M; j++) {
+            row.push(parseFloat(document.getElementById(`b_${i}_${j}`).value));
+        }
+        currentB.push(row);
+    }
+    
+    return { currentPi, currentA, currentB };
+}
+
+function updateDOMMatrices(newPi, newA, newB) {
+    const N = states.length;
+    const M = observations.length;
+    
+    for (let i = 0; i < N; i++) {
+        document.getElementById(`pi_${i}`).value = newPi[i].toFixed(4);
+    }
+
+    for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+            document.getElementById(`a_${i}_${j}`).value = newA[i][j].toFixed(4);
+        }
+    }
+
+    for (let i = 0; i < N; i++) {
+        for (let j = 0; j < M; j++) {
+            document.getElementById(`b_${i}_${j}`).value = newB[i][j].toFixed(4);
+        }
+    }
+}
+
+function runIteration() {
+    const seqStr = sequenceInput.value.split(',').map(s => s.trim()).filter(s => s);
+    const O = seqStr.map(s => observations.indexOf(s));
+    
+    if (O.includes(-1)) {
+        alert("Observation sequence contains an invalid observation symbol!");
+        return;
+    }
+
+    const { currentPi, currentA, currentB } = readMatrices();
+    const T = O.length;
+    const N = states.length;
+    
+    // 1. Forward Pass (Alpha)
+    let alpha = Array(T).fill(0).map(() => Array(N).fill(0));
+    for (let i = 0; i < N; i++) {
+        alpha[0][i] = currentPi[i] * currentB[i][O[0]];
+    }
+    
+    for (let t = 1; t < T; t++) {
+        for (let j = 0; j < N; j++) {
+            let sum = 0;
+            for (let i = 0; i < N; i++) {
+                sum += alpha[t-1][i] * currentA[i][j];
+            }
+            alpha[t][j] = sum * currentB[j][O[t]];
+        }
+    }
+
+    // 2. Backward Pass (Beta)
+    let beta = Array(T).fill(0).map(() => Array(N).fill(0));
+    for (let i = 0; i < N; i++) {
+        beta[T-1][i] = 1;
+    }
+    
+    for (let t = T - 2; t >= 0; t--) {
+        for (let i = 0; i < N; i++) {
+            let sum = 0;
+            for (let j = 0; j < N; j++) {
+                sum += currentA[i][j] * currentB[j][O[t+1]] * beta[t+1][j];
+            }
+            beta[t][i] = sum;
+        }
+    }
+
+    // P(O)
+    let P_O = 0;
+    for (let i = 0; i < N; i++) P_O += alpha[T-1][i];
+
+    // 3. State Responsibilities (Gamma) and Transitions (Xi)
+    let gamma = Array(T).fill(0).map(() => Array(N).fill(0));
+    let xi = Array(T-1).fill(0).map(() => Array(N).fill(0).map(() => Array(N).fill(0)));
+    
+    for (let t = 0; t < T; t++) {
+        let sumGamma = 0;
+        for (let i = 0; i < N; i++) {
+            gamma[t][i] = (alpha[t][i] * beta[t][i]) / P_O;
+            sumGamma += gamma[t][i];
+        }
+        
+        if (t < T - 1) {
+            let sumXi = 0;
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    xi[t][i][j] = (alpha[t][i] * currentA[i][j] * currentB[j][O[t+1]] * beta[t+1][j]) / P_O;
+                    sumXi += xi[t][i][j];
+                }
+            }
+        }
+    }
+
+    // 4. Updates (Baum-Welch)
+    let newPi = [...gamma[0]];
+    
+    let newA = Array(N).fill(0).map(() => Array(N).fill(0));
+    for (let i = 0; i < N; i++) {
+        let denomA = 0;
+        for (let t = 0; t < T - 1; t++) denomA += gamma[t][i];
+        
+        for (let j = 0; j < N; j++) {
+            let numA = 0;
+            for (let t = 0; t < T - 1; t++) numA += xi[t][i][j];
+            newA[i][j] = (denomA === 0) ? 0 : numA / denomA;
+        }
+    }
+    
+    let newB = Array(N).fill(0).map(() => Array(observations.length).fill(0));
+    for (let i = 0; i < N; i++) {
+        let denomB = 0;
+        for (let t = 0; t < T; t++) denomB += gamma[t][i];
+        
+        for (let k = 0; k < observations.length; k++) {
+            let numB = 0;
+            for (let t = 0; t < T; t++) {
+                if (O[t] === k) numB += gamma[t][i];
+            }
+            newB[i][k] = (denomB === 0) ? 0 : numB / denomB;
+        }
+    }
+
+    iterationCount++;
+    displayResults(alpha, beta, gamma, newPi, newA, newB);
+    updateDOMMatrices(newPi, newA, newB);
+}
+
+function displayResults(alpha, beta, gamma, pi_new, a_new, b_new) {
+    resultsSection.style.display = 'flex';
+    
+    let html = `
+        <div class="iteration-card">
+            <h3>Iteration ${iterationCount}</h3>
+            
+            <div class="table-wrapper">
+                <h4>Forward Probabilities (&#945;)</h4>
+                <table>
+                    <tr><th>Time Step</th>${states.map(s => `<th>${s}</th>`).join('')}</tr>
+                    ${alpha.map((row, t) => `<tr><td>t=${t+1} (${sequenceInput.value.split(',')[t].trim()})</td>${row.map(val => `<td>${val.toExponential(4)}</td>`).join('')}</tr>`).join('')}
+                </table>
+            </div>
+
+            <div class="table-wrapper">
+                <h4>Backward Probabilities (&#946;)</h4>
+                <table>
+                    <tr><th>Time Step</th>${states.map(s => `<th>${s}</th>`).join('')}</tr>
+                    ${beta.map((row, t) => `<tr><td>t=${t+1}</td>${row.map(val => `<td>${val.toExponential(4)}</td>`).join('')}</tr>`).join('')}
+                </table>
+            </div>
+
+            <div class="table-wrapper">
+                <h4>State Responsibilities (&#947;)</h4>
+                <table>
+                    <tr><th>Time Step</th>${states.map(s => `<th>${s}</th>`).join('')}</tr>
+                    ${gamma.map((row, t) => `<tr><td>t=${t+1}</td>${row.map(val => `<td>${val.toFixed(4)}</td>`).join('')}</tr>`).join('')}
+                </table>
+            </div>
+        </div>
+    `;
+    
+    // prepend the result
+    iterationLog.innerHTML = html + iterationLog.innerHTML;
+}
+
+runIterBtn.addEventListener('click', runIteration);
+runMultiBtn.addEventListener('click', () => {
+    for (let i = 0; i < 5; i++) {
+        runIteration();
+    }
+});
+
+resetBtn.addEventListener('click', () => {
+    iterationCount = 0;
+    iterationLog.innerHTML = '';
+    resultsSection.style.display = 'none';
+    renderMatrices();
+});
